@@ -1,13 +1,14 @@
 /*
- * Footprint predictor for 3D DRAM 
+ * Footprint predictor for 3D DRAM
  * cs 752 fall 2015
  * written by Mitchell Manar - manarm@cs.wisc.edu
  */
-#include "footprint_pred.hh"
+#include <climits>
 #include <iostream>
-#include <climits> 
 
-int main()
+#include "footprint_pred.hh"
+
+/*int main()
 {
   bool in_mem, in_mem_prev;
   Random random_gen;
@@ -28,7 +29,7 @@ int main()
 
   cout << endl << "-----------------------" << endl;
 
-  // Test two: create 4-way footprint table and test eviction. 
+  // Test two: create 4-way footprint table and test eviction.
   cout << "Starting test 2: testing eviction in the footprint table" << endl;
   FootprintPred fpred2(32,4,4096,1024*1024,0.5,"footprint");
   Addr addr = 4*1024*1024; // Second huge page (create entry)
@@ -58,7 +59,7 @@ int main()
   for(int i = 0; i < 100000; ++i){
       fpred4.addr_inFastMem((Addr)random_gen.random<Addr>(0, ULONG_MAX));
   }
- 
+
   cout << endl << "-----------------------" << endl;
 
   // Test five: perform 100K random accesses with hot/cold. Should generate 10 migrations.
@@ -67,38 +68,36 @@ int main()
   for(int i = 0; i < 100000; ++i){
       fpred5.addr_inFastMem((Addr)random_gen.random<Addr>(0, ULONG_MAX));
   }
-  
+
   cout << "All tests succeeded!" << endl;
- 
+
   return 0;
-}
+}*/
 
 // Hsize = size of huge page in KB
 // fsize = total # of ways in footprint table
 // ramsize = size of 3d ram in KB
-// thresh = % small pages touched before migration 
-FootprintPred::FootprintPred(int fsize, int fassoc, int hsize, int ramsize, float thresh, string mpolicy) :
+// thresh = % small pages touched before migration
+FootprintPred::FootprintPred(int fsize, int fassoc, int hsize, int ramsize, float thresh, std::string mpolicy) :
 fpsize(fsize/fassoc), fpassoc(fassoc), hugesize(hsize), ram_size(ramsize), threshold(thresh),
-hotCold_clock(0), clock_hand(0), random_gen() 
+clock_hand(0), hotCold_clock(0), random_gen()
 {
   lg_fpsize = (int)log2(fpsize);
   hugebits = (int)log2(hugesize) + 10; // in KB
   ram_pages = ram_size / hugesize; // both in KB
   addrbits = sizeof(Addr) * 8;
-   
+
   if(mpolicy.compare("footprint") == 0){
-    policy = FOOTPRINT; 
+    policy = FOOTPRINT;
   } else {
     policy = HOTCOLD;
-  } 
+  }
 
-  bool hotTrue = policy == HOTCOLD;
-
-  cout << "Footprint table size " << fpsize << endl;
-  cout << "Footprint table assoc " << fpassoc << endl;
-  cout << "Pages in 3DRAM " << ram_pages << endl;
-  cout << "Bits in hugepage offset " << hugebits << endl;
-  cout << "Policy is hotcold? " << hotTrue << endl;
+  //cout << "Footprint table size " << fpsize << endl;
+  //cout << "Footprint table assoc " << fpassoc << endl;
+  //cout << "Pages in 3DRAM " << ram_pages << endl;
+  //cout << "Bits in hugepage offset " << hugebits << endl;
+  //cout << "Policy is hotcold? " << hotTrue << endl;
 
   footprint_table = (fp_entry ***)malloc(fpsize * sizeof(fp_entry **));
   for(int i = 0; i < fpsize; ++i){
@@ -114,18 +113,24 @@ hotCold_clock(0), clock_hand(0), random_gen()
     trans_table[i] = init_trans_entry();
   }
 };
-    
-bool 
+
+bool
 FootprintPred::addr_inFastMem(Addr addr){
   int tag = get_hugetag(addr);
   bool inFastMem = false;
-  hotCold_clock++; 
+  hotCold_clock++;
 
   for(int i = 0; i < ram_pages; ++i){
     if(trans_table[i].valid && trans_table[i].tag == tag){
       trans_table[i].clock_set = true;
       inFastMem = true;
-    } 
+    }
+  }
+
+  if(inFastMem){
+    fastmem_hits++;
+  } else {
+    fastmem_misses++;
   }
 
   mru = addr;
@@ -136,15 +141,15 @@ FootprintPred::addr_inFastMem(Addr addr){
   } else { // HOTCOLD
     if(hotCold_clock == TIMESLICE){
       migrate_page(mru);
-      hotCold_clock = 0; 
+      hotCold_clock = 0;
     }
   }
 
   return inFastMem;
-}  
+}
 
-    
-void 
+
+void
 FootprintPred::record_access(Addr addr){
   Addr index = get_index(addr);
   Addr tag = get_tag(addr);
@@ -159,16 +164,17 @@ FootprintPred::record_access(Addr addr){
   }
 
   if(entry){
+    fprint_hits++;
     // entry found, mark page in footprint
     Addr offset = get_small_pg(addr);
     bool already_set = entry->footprint[offset];
-   
+
     // if page not already marked, recalc sum
     if(!already_set){
       entry->footprint[offset] = true;
       entry->footprint_sum++;
     }
-    
+
     // If count exceeds threshhold, migrate
     if(entry->footprint_sum > threshold * pow(2,hugebits-PGBITS)){
       entry->valid = false;
@@ -176,9 +182,10 @@ FootprintPred::record_access(Addr addr){
     } else {    // promote to head for MRU
       fp_entry tmp = *footprint_table[index][0];
       *footprint_table[index][0] = *entry;
-      *entry = tmp; 
+      *entry = tmp;
     }
   } else {      // No entry found -- nMRU replacement (MRU in slot 0)
+    fprint_misses++;
     //cout << "New footprint entry for page index " << index << " and tag " << tag << endl;
     if(fpassoc > 1){
       idx = -1;
@@ -187,15 +194,15 @@ FootprintPred::record_access(Addr addr){
           idx = i;
           break;
         }
-      } 
+      }
       if(idx == -1){
-        int idx = random_gen.random<int>(1, fpassoc - 1);
+        idx = random_gen.random<int>(1, fpassoc - 1);
         //cout << "Evicting way " << "from index " << index << endl;
       }
 
       footprint_table[index][idx] = footprint_table[index][0];
     }
-  
+
     fp_entry *new_entry = footprint_table[index][0];
     new_entry->valid = true;
     new_entry->tag = tag;
@@ -207,13 +214,15 @@ FootprintPred::record_access(Addr addr){
   }
 
   return;
-} 
+}
 
 // Places addr huge page in translation table, evicting using
-// clock plru as necessary 
-void 
+// clock plru as necessary
+void
 FootprintPred::migrate_page(Addr addr){
-  cout << "Migrating page..." << endl;
+  //cout << "Migrating page..." << endl;
+
+  migrations_slow_to_fast++;
 
   // look for invalid page first
   int victim = -1;
@@ -226,8 +235,8 @@ FootprintPred::migrate_page(Addr addr){
     }
   }
   if(!entry_found){
-  cout << "Evicting a page from trans table" << endl;
-  // clock: Advance hand: clear 1's, evict on 0. 
+  // cout << "Evicting a page from trans table" << endl;
+  // clock: Advance hand: clear 1's, evict on 0.
     while(victim == -1){
       if(trans_table[clock_hand].clock_set){
         trans_table[clock_hand].clock_set = false;
@@ -238,11 +247,11 @@ FootprintPred::migrate_page(Addr addr){
       }
     }
   }
-      
+
   trans_table[victim].tag = get_hugetag(addr);
   trans_table[victim].valid = true;
   trans_table[victim].clock_set = false;
-  
+
   return;
 }
 
@@ -259,6 +268,37 @@ FootprintPred::init_fp_entry(fp_entry *entry){
   return;
 }
 
+void
+FootprintPred::regStats(void){
+  using namespace Stats;
+
+  fprint_hits
+    .name("Footprint.predHits")
+    .desc("Number of hits in the footprint predictor table.");
+
+  fprint_misses
+    .name("Footprint.predMisses")
+    .desc("Number of misses in the footprint predictor table.");
+
+  fastmem_hits
+    .name("Footprint.transHits")
+    .desc("Number of hits in the footprint translation table (ie, in fast memory.)");
+
+  fastmem_misses
+    .name("Footprint.transMisses")
+    .desc("Number of misses in the footprint translation table (ie, in fast memory.)");
+
+  migrations_slow_to_fast
+    .name("Footprint.migrations")
+    .desc("Number of migrations for the footprint predictor from slow to fast memory.");
+
+  fprint_hits = 0;
+  fprint_misses = 0;
+  fastmem_hits = 0;
+  fastmem_misses = 0;
+  migrations_slow_to_fast = 0;
+}
+
 trans_entry
 FootprintPred::init_trans_entry(void){
   trans_entry ret;
@@ -268,7 +308,7 @@ FootprintPred::init_trans_entry(void){
   return ret;
 }
 
-Addr 
+Addr
 FootprintPred::get_tag(Addr addr){
   Addr result = addr;
   Addr tag_mask = 1;
@@ -280,10 +320,10 @@ FootprintPred::get_tag(Addr addr){
 }
 
 // Get tag of huge page for addr translation table
-Addr 
+Addr
 FootprintPred::get_hugetag(Addr addr){
   Addr result = addr;
-  Addr tag_mask = 1; 
+  Addr tag_mask = 1;
   tag_mask = tag_mask << (addrbits - hugebits);
   tag_mask -= 1;
   result = result >> hugebits;
@@ -291,10 +331,10 @@ FootprintPred::get_hugetag(Addr addr){
   return result;
 }
 
-Addr 
+Addr
 FootprintPred::get_index(Addr addr){
   Addr result = addr;
-  Addr index_mask = 1; 
+  Addr index_mask = 1;
   index_mask = index_mask << lg_fpsize;
   index_mask -= 1;
   result = result >> hugebits;
@@ -302,10 +342,10 @@ FootprintPred::get_index(Addr addr){
   return result;
 }
 
-Addr 
+Addr
 FootprintPred::get_small_pg(Addr addr){
   Addr result = addr;
-  Addr pg_mask = 1; 
+  Addr pg_mask = 1;
   pg_mask = pg_mask << (hugebits - PGBITS);
   pg_mask -= 1;
   result = result >> PGBITS;
