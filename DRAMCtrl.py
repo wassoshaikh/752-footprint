@@ -323,8 +323,13 @@ class DRAMCtrl(AbstractMemory):
 # an 8x8 configuration.
 class DDR3_1600_x64(DRAMCtrl):
     # footprint
-    footprint_size = '64'
-    footprint_assoc = '2'
+    footprint_fsize = '64'
+    footprint_fassoc = '2'
+    footprint_hsize = '4096'
+    footprint_ramsize = '4194304'
+    footprint_thresh = '0.5'
+    footprint_mpolicy = 'footprint'
+
 
     # size of device in bytes
     device_size = '512MB'
